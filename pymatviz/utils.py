@@ -1,19 +1,25 @@
 from __future__ import annotations
 
 import ast
+import os
 import subprocess
 from os.path import dirname
 from shutil import which
-from typing import Any, Literal, Sequence, Union
+from typing import TYPE_CHECKING, Any, Literal, Sequence, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from matplotlib.gridspec import GridSpec
+import sklearn
 from matplotlib.offsetbox import AnchoredText
 from numpy.typing import NDArray
+from sklearn.metrics import mean_absolute_percentage_error as mape
 from sklearn.metrics import r2_score
+
+
+if TYPE_CHECKING:
+    from matplotlib.gridspec import GridSpec
 
 
 ROOT = dirname(dirname(__file__))
@@ -132,10 +138,11 @@ def annotate_bars(
     ax.set(ylim=(None, y_max * y_max_headroom))
 
 
-def annotate_mae_r2(
+def annotate_metrics(
     xs: NDArray[np.float64 | np.int_],
     ys: NDArray[np.float64 | np.int_],
     ax: plt.Axes = None,
+    metrics: dict[str, float] | Sequence[str] = ("MAE", "R2"),
     prefix: str = "",
     suffix: str = "",
     prec: int = 3,
@@ -148,10 +155,15 @@ def annotate_mae_r2(
     Args:
         xs (array, optional): x values.
         ys (array, optional): y values.
+        metrics (dict[str, float] | list[str], optional): Metrics to show. Can be a
+            subset of recognized keys MAE, R2, R2_adj, RMSE, MSE, MAPE or the names of
+            sklearn.metrics.regression functions or any dict of metric names and values.
+            Defaults to ("MAE", "R2").
         ax (Axes, optional): matplotlib Axes on which to add the box. Defaults to None.
         loc (str, optional): Where on the plot to place the AnchoredText object.
             Defaults to "lower right".
-        prec (int, optional): decimal places in printed metrics. Defaults to 3.
+        prec (int, optional): Precision, i.e. decimal places to show in printed metrics.
+            Defaults to 3.
         prefix (str, optional): Title or other string to prepend to metrics.
             Defaults to "".
         suffix (str, optional): Text to append after metrics. Defaults to "".
@@ -162,16 +174,37 @@ def annotate_mae_r2(
     Returns:
         AnchoredText: Instance containing the metrics.
     """
-    ax = ax or plt.gca()
+    funcs = {
+        "MAE": lambda x, y: np.abs(x - y).mean(),
+        "RMSE": lambda x, y: (((x - y) ** 2).mean()) ** 0.5,
+        "MSE": lambda x, y: ((x - y) ** 2).mean(),
+        "MAPE": mape,
+        "R2": r2_score,
+        # TODO: check this for correctness
+        "R2_adj": lambda x, y: 1 - (1 - r2_score(x, y)) * (len(x) - 1) / (len(x) - 2),
+    }
+    for key in set(metrics) - set(funcs):
+        func = getattr(sklearn.metrics, key, None)
+        if func:
+            funcs[key] = func
+    if bad_keys := set(metrics) - set(funcs):
+        raise ValueError(f"Unrecognized metrics: {bad_keys}")
 
+    ax = ax or plt.gca()
     nans = np.isnan(xs) | np.isnan(ys)
     xs, ys = xs[~nans], ys[~nans]
 
-    text = f"{prefix}$\\mathrm{{MAE}} = {np.abs(xs - ys).mean():.{prec}f}$"
-    text += f"\n$R^2 = {r2_score(xs, ys):.{prec}f}${suffix}"
+    text = prefix
+    if isinstance(metrics, dict):
+        for key, val in metrics.items():
+            text += f"{key} = {val:.{prec}f}\n"
+    else:
+        for metric in metrics:
+            text += f"{metric} = {funcs[metric](xs, ys):.{prec}f}\n"
+    text += suffix
 
-    kwargs["frameon"] = kwargs.get("frameon", False)
-    kwargs["loc"] = kwargs.get("loc", "lower right")
+    kwargs["frameon"] = kwargs.get("frameon", False)  # default to no frame
+    kwargs["loc"] = kwargs.get("loc", "lower right")  # default to lower right
     text_box = AnchoredText(text, **kwargs)
     ax.add_artist(text_box)
 
@@ -260,6 +293,7 @@ def save_fig(
     fig: go.Figure | plt.Figure | plt.Axes,
     path: str,
     plotly_config: dict[str, Any] = None,
+    env_disable: Sequence[str] = ("CI",),
     **kwargs: Any,
 ) -> None:
     """Write a plotly figure to an HTML file. If the file is has .svelte
@@ -274,9 +308,13 @@ def save_fig(
         Defaults to dict(showTips=False, responsive=True, modeBarButtonsToRemove=
         ["lasso2d", "select2d", "autoScale2d", "toImage"]).
         See https://plotly.com/python/configuration-options.
+        env_disable (list[str], optional): Do nothing if any of these environment
+            variables are set. Defaults to ("CI",).
 
         **kwargs: Keyword arguments passed to fig.write_html().
     """
+    if any(var in os.environ for var in env_disable):
+        return
     # handle matplotlib figures
     if isinstance(fig, (plt.Figure, plt.Axes)):
         if hasattr(fig, "figure"):
@@ -403,9 +441,53 @@ def df_to_arrays(
     df_no_nan = df.dropna(subset=flat_args)
     for idx, col_name in enumerate(args):
         if isinstance(col_name, (str, int)):
-            args[idx] = df_no_nan[col_name].values  # type: ignore[index]
+            args[idx] = df_no_nan[col_name].to_numpy()  # type: ignore[index]
         else:
-            col_data = df_no_nan[[*col_name]].values.T
+            col_data = df_no_nan[[*col_name]].to_numpy().T
             args[idx] = dict(zip(col_name, col_data))  # type: ignore[index]
 
     return args  # type: ignore[return-value]
+
+
+def bin_df_cols(
+    df: pd.DataFrame,
+    bin_by_cols: Sequence[str],
+    group_by_cols: Sequence[str] = (),
+    n_bins: int | Sequence[int] = 100,
+    verbose: bool = True,
+) -> pd.DataFrame:
+    """Bin columns of a DataFrame.
+
+    Args:
+        df (pd.DataFrame): DataFrame to bin.
+        bin_by_cols (Sequence[str]): Columns to bin.
+        group_by_cols (Sequence[str]): Additional columns to group by. Defaults to ().
+        n_bins (int): Number of bins to use. Defaults to 100.
+        verbose (bool): If True, report df length reduction. Defaults to True.
+
+    Returns:
+        pd.DataFrame: Binned DataFrame.
+    """
+    if isinstance(n_bins, int):
+        n_bins = [n_bins] * len(bin_by_cols)
+
+    if len(bin_by_cols) != len(n_bins):
+        raise ValueError(f"{len(bin_by_cols)=} != {len(n_bins)=}")
+
+    index_name = df.index.name
+
+    for col, bins in zip(bin_by_cols, n_bins):
+        df[f"{col}_bins"] = pd.cut(df[col], bins=bins)
+
+    df_bin = (
+        df.reset_index()
+        .groupby([*[f"{c}_bins" for c in bin_by_cols], *group_by_cols])
+        .first()
+        .dropna()
+    )
+    if verbose:
+        print(f"{len(df_bin)=:,} / {len(df)=:,} = {len(df_bin)/len(df):.1%}")
+
+    if index_name is None:
+        return df_bin
+    return df_bin.reset_index().set_index(index_name)

@@ -281,7 +281,7 @@ def spacegroup_hist(
 
 def hist_elemental_prevalence(
     formulas: ElemValues,
-    count_mode: CountMode = "element_composition",
+    count_mode: CountMode = "composition",
     log: bool = False,
     keep_top: int = None,
     ax: plt.Axes = None,
@@ -332,7 +332,7 @@ def hist_elemental_prevalence(
     if bar_values is not None:
         if bar_values == "percent":
             sum_elements = non_zero.sum()
-            labels = [f"{el / sum_elements:.1%}" for el in non_zero.values]
+            labels = [f"{el / sum_elements:.1%}" for el in non_zero.to_numpy()]
         else:
             labels = non_zero.astype(int).to_list()
         annotate_bars(

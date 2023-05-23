@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-import pandas as pd
 import plotly.graph_objects as go
+
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 def sankey_from_2_df_cols(
@@ -16,7 +19,7 @@ def sankey_from_2_df_cols(
 
     Args:
         df (pd.DataFrame): Pandas dataframe.
-        cols (Sequence[str]): 2-tuple of source and target column names. Source
+        cols (list[str]): 2-tuple of source and target column names. Source
             corresponds to left, target to right side of the diagram.
         labels_with_counts (bool, optional): Whether to append value counts to node
             labels. Defaults to True.
@@ -34,7 +37,7 @@ def sankey_from_2_df_cols(
         )
 
     source, target, value = (
-        df[list(cols)].value_counts().reset_index().values.T.tolist()
+        df[list(cols)].value_counts().reset_index().to_numpy().T.tolist()
     )
 
     if labels_with_counts:
@@ -64,5 +67,4 @@ def sankey_from_2_df_cols(
         **kwargs,
     )
 
-    fig = go.Figure(data=[sankey])
-    return fig
+    return go.Figure(data=[sankey])

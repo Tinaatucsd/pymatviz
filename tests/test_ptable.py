@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal, Sequence
+from typing import TYPE_CHECKING, Any, Literal, Sequence
 
 import matplotlib.pyplot as plt
 import pandas as pd
 import plotly.graph_objects as go
 import pytest
 from plotly.exceptions import PlotlyError
-from pymatgen.core import Composition
 
 from pymatviz import (
     count_elements,
@@ -20,10 +19,12 @@ from pymatviz.utils import df_ptable
 
 
 if TYPE_CHECKING:
+    from pymatgen.core import Composition
+
     from pymatviz.ptable import CountMode
 
 
-@pytest.fixture
+@pytest.fixture()
 def glass_formulas() -> list[str]:
     """First 20 materials in the Matbench glass dataset.
 
@@ -38,12 +39,12 @@ def glass_formulas() -> list[str]:
     ).split()
 
 
-@pytest.fixture
+@pytest.fixture()
 def glass_elem_counts(glass_formulas: pd.Series[Composition]) -> pd.Series[int]:
     return count_elements(glass_formulas)
 
 
-@pytest.fixture
+@pytest.fixture()
 def steel_formulas() -> list[str]:
     """Unusually fractional compositions, good for testing edge cases.
 
@@ -60,7 +61,7 @@ def steel_formulas() -> list[str]:
     ]
 
 
-@pytest.fixture
+@pytest.fixture()
 def steel_elem_counts(steel_formulas: pd.Series[Composition]) -> pd.Series[int]:
     return count_elements(steel_formulas)
 
@@ -68,7 +69,7 @@ def steel_elem_counts(steel_formulas: pd.Series[Composition]) -> pd.Series[int]:
 @pytest.mark.parametrize(
     "count_mode, counts",
     [
-        ("element_composition", {"Fe": 22, "O": 63, "P": 12}),
+        ("composition", {"Fe": 22, "O": 63, "P": 12}),
         ("fractional_composition", {"Fe": 2.5, "O": 5, "P": 0.5}),
         ("reduced_composition", {"Fe": 13, "O": 27, "P": 3}),
         ("occurrence", {"Fe": 8, "O": 8, "P": 3}),
@@ -148,6 +149,15 @@ def test_ptable_heatmap(
 
     with pytest.raises(ValueError, match=r"Unexpected symbol\(s\) foobar"):
         ptable_heatmap(glass_elem_counts, exclude_elements=["foobar"])
+
+    # test cbar_precision
+    ax = ptable_heatmap(glass_elem_counts, cbar_precision=".3f")
+    cbar_1st_label = ax.child_axes[0].get_xticklabels()[0].get_text()
+    assert cbar_1st_label == "0.000"
+
+    ax = ptable_heatmap(glass_elem_counts, heat_mode="percent", cbar_precision=".3%")
+    cbar_1st_label = ax.child_axes[0].get_xticklabels()[0].get_text()
+    assert cbar_1st_label == "0.000%"
 
 
 def test_ptable_heatmap_ratio(
@@ -239,3 +249,43 @@ def test_ptable_heatmap_plotly_colorscale(
 ) -> None:
     fig = ptable_heatmap_plotly(glass_formulas, colorscale=colorscale)
     assert isinstance(fig, go.Figure)
+
+
+@pytest.mark.parametrize(
+    "color_bar", [{}, dict(orientation="v", len=0.8), dict(orientation="h", len=0.3)]
+)
+def test_ptable_heatmap_plotly_color_bar(
+    glass_formulas: list[str], color_bar: dict[str, Any]
+) -> None:
+    fig = ptable_heatmap_plotly(glass_formulas, color_bar=color_bar)
+    # check color bar has expected length
+    assert fig.data[0].colorbar.len == color_bar.get("len", 0.4)
+    # check color bar has expected title side
+    assert (
+        fig.data[0].colorbar.title.side == "right"
+        if color_bar.get("orientation") == "v"
+        else "top"
+    )
+
+
+@pytest.mark.parametrize(
+    "cscale_range", [(None, None), (None, 10), (2, None), (2, 87123)]
+)
+def test_ptable_heatmap_plotly_cscale_range(
+    cscale_range: tuple[float | None, float | None]
+) -> None:
+    fig = ptable_heatmap_plotly(df_ptable.density, cscale_range=cscale_range)
+    trace = fig.data[0]
+    assert "colorbar" in trace
+    # check that color bar range is correct
+    assert trace["zmin"] == cscale_range[0]
+    assert trace["zmax"] == cscale_range[1]
+
+
+def test_ptable_heatmap_plotly_cscale_range_raises() -> None:
+    cscale_range = (0, 10, 20)
+    with pytest.raises(ValueError) as excinfo:
+        ptable_heatmap_plotly(
+            df_ptable.density, cscale_range=cscale_range  # type: ignore[arg-type]
+        )
+    assert f"{cscale_range=} should have length 2" in str(excinfo.value)

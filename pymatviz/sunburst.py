@@ -1,14 +1,17 @@
 from __future__ import annotations
 
-from typing import Any, Literal, Sequence, cast
+from typing import TYPE_CHECKING, Any, Literal, Sequence
 
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 from pymatgen.core import Structure
 from pymatgen.symmetry.groups import SpaceGroup
 
 from pymatviz.utils import get_crystal_sys
+
+
+if TYPE_CHECKING:
+    import plotly.graph_objects as go
 
 
 def spacegroup_sunburst(
@@ -27,6 +30,8 @@ def spacegroup_sunburst(
             space group strings or numbers (from 1 - 230) or pymatgen structures.
         show_counts ("value" | "percent" | False): Whether to display values below each
             labels on the sunburst.
+        color_discrete_sequence (list[str]): A list of 7 colors, one for each crystal
+            system. Defaults to plotly.express.colors.qualitative.G10.
         **kwargs: Additional keyword arguments passed to plotly.express.sunburst.
 
     Returns:
@@ -34,9 +39,9 @@ def spacegroup_sunburst(
     """
     if isinstance(next(iter(data)), Structure):
         # if 1st sequence item is structure, assume all are
-        data = cast(Sequence[Structure], data)
         series = pd.Series(
-            struct.get_space_group_info()[1] for struct in data  # type: ignore
+            struct.get_space_group_info()[1]  # type: ignore[union-attr]
+            for struct in data
         )
     else:
         series = pd.Series(data)
@@ -44,13 +49,12 @@ def spacegroup_sunburst(
     df = pd.DataFrame(series.value_counts().reset_index())
     df.columns = ["spacegroup", "count"]
 
-    try:
+    try:  # assume column contains integers as space group numbers
         df["crystal_sys"] = [get_crystal_sys(x) for x in df.spacegroup]
-    except ValueError:  # column must be space group strings
+    except ValueError:  # column must be strings of space group symbols
         df["crystal_sys"] = [SpaceGroup(x).crystal_system for x in df.spacegroup]
 
-    if "color_discrete_sequence" not in kwargs:
-        kwargs["color_discrete_sequence"] = px.colors.qualitative.G10
+    kwargs.setdefault("color_discrete_sequence", px.colors.qualitative.G10)
 
     fig = px.sunburst(df, path=["crystal_sys", "spacegroup"], values="count", **kwargs)
 

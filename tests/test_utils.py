@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
+import os
+from typing import TYPE_CHECKING, Any, Sequence
+from unittest.mock import patch
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -12,7 +13,8 @@ from matplotlib.offsetbox import AnchoredText
 from pymatviz.utils import (
     CrystalSystem,
     add_identity_line,
-    annotate_mae_r2,
+    annotate_metrics,
+    bin_df_cols,
     df_to_arrays,
     get_crystal_sys,
     save_fig,
@@ -20,16 +22,40 @@ from pymatviz.utils import (
 from tests.conftest import y_pred, y_true
 
 
-def test_annotate_mae_r2() -> None:
-    text_box = annotate_mae_r2(y_pred, y_true)
+if TYPE_CHECKING:
+    from pathlib import Path
+
+
+@pytest.mark.parametrize(
+    "metrics, prec",
+    [
+        (["RMSE"], 1),
+        (("MAPE", "MSE"), 2),
+        ({"MAE", "R2", "RMSE"}, 3),
+        ({"MAE": 1, "R2": 2, "RMSE": 3}, 0),
+    ],
+)
+def test_annotate_metrics(metrics: dict[str, float] | Sequence[str], prec: int) -> None:
+    text_box = annotate_metrics(y_pred, y_true, metrics=metrics, prec=prec)
 
     assert isinstance(text_box, AnchoredText)
 
-    txt = "$\\mathrm{MAE} = 0.113$\n$R^2 = 0.765$"
+    expected = dict(MAE=0.113, R2=0.765, RMSE=0.144, MAPE=0.5900, MSE=0.0206)
+
+    txt = ""
+    if isinstance(metrics, dict):
+        for key, val in metrics.items():
+            txt += f"{key} = {val:.{prec}f}\n"
+    else:
+        for key in metrics:
+            txt += f"{key} = {expected[key]:.{prec}f}\n"
+
     assert text_box.txt.get_text() == txt
 
     prefix, suffix = "Metrics:\n", "\nthe end"
-    text_box = annotate_mae_r2(y_pred, y_true, prefix=prefix, suffix=suffix)
+    text_box = annotate_metrics(
+        y_pred, y_true, metrics=metrics, prec=prec, prefix=prefix, suffix=suffix
+    )
     assert text_box.txt.get_text() == prefix + txt + suffix
 
 
@@ -75,10 +101,11 @@ def test_df_to_arrays() -> None:
     x1, y1 = df_to_arrays(None, y_true, y_pred)
     x_col, y_col = df.columns[:2]
     x2, y2 = df_to_arrays(df, x_col, y_col)
-    assert all(x1 == x2)  # type: ignore[union-attr]
-    assert all(y1 == y2)  # type: ignore[union-attr]
-    assert all(x1 == y_true)  # type: ignore[union-attr]
-    assert all(y1 == y_pred)  # type: ignore[union-attr]
+    # TODO find a mypy-compat way to check for exact equality
+    assert x1 == pytest.approx(x2)
+    assert y1 == pytest.approx(y2)
+    assert x1 == pytest.approx(y_true)
+    assert y1 == pytest.approx(y_pred)
 
     with pytest.raises(TypeError, match="df should be pandas DataFrame or None"):
         df_to_arrays("foo", y_true, y_pred)
@@ -95,17 +122,27 @@ def test_df_to_arrays() -> None:
 @pytest.mark.parametrize(
     "plotly_config", [None, {"showTips": True}, {"scrollZoom": True}]
 )
+@pytest.mark.parametrize("env_disable", [[], ["CI"]])
+@patch.dict(os.environ, {"CI": "1"})
 def test_save_fig(
     fig: go.Figure | plt.Figure | plt.Axes,
     ext: str,
     tmp_path: Path,
     plotly_config: dict[str, Any] | None,
+    env_disable: list[str],
 ) -> None:
     if isinstance(fig, plt.Figure) and ext in ("svelte", "html"):
-        pytest.skip("svelte not supported for matplotlib figures")
+        pytest.skip("saving to Svelte file not supported for matplotlib figures")
 
     path = f"{tmp_path}/fig.{ext}"
-    save_fig(fig, path, plotly_config=plotly_config)
+    save_fig(fig, path, plotly_config=plotly_config, env_disable=env_disable)
+
+    if any(var in os.environ for var in env_disable):
+        # if CI env var is set, we should not save the figure
+        assert not os.path.exists(path)
+        return
+
+    assert os.path.isfile(path)
 
     if ext in ("svelte", "html"):
         with open(path) as file:
@@ -123,3 +160,50 @@ def test_save_fig(
             assert html.startswith("<div {...$$props}>")
         else:
             assert html.startswith("<div>")
+
+
+@pytest.mark.parametrize(
+    "bin_by_cols, group_by_cols, n_bins, expected_n_bins",
+    [
+        (["col1"], [], 2, [2]),
+        (["col1", "col2"], [], 2, [2, 2]),
+        (["col1", "col2"], [], [2, 3], [2, 3]),
+        (["col1"], ["col2"], 2, [2]),
+    ],
+)
+@pytest.mark.parametrize("verbose", [True, False])
+def test_bin_df_cols(
+    bin_by_cols: list[str],
+    group_by_cols: list[str],
+    n_bins: int | list[int],
+    expected_n_bins: list[int],
+    verbose: bool,
+) -> None:
+    data = {"col1": [1, 2, 3, 4], "col2": [2, 3, 4, 5], "col3": [3, 4, 5, 6]}
+    df = pd.DataFrame(data)
+
+    df_binned = bin_df_cols(df, bin_by_cols, group_by_cols, n_bins, verbose=verbose)
+
+    df_grouped = (
+        df.reset_index()
+        .groupby([*[f"{c}_bins" for c in bin_by_cols], *group_by_cols])
+        .first()
+        .dropna()
+    )
+
+    for col, bins in zip(bin_by_cols, expected_n_bins):
+        binned_col = f"{col}_bins"
+        assert binned_col in df_grouped.index.names
+
+        unique_bins = df_grouped.index.get_level_values(binned_col).nunique()
+        assert unique_bins <= bins
+
+    assert not df_binned.empty
+
+
+def test_bin_df_cols_raises_value_error() -> None:
+    df = pd.DataFrame({"col1": [1, 2, 3, 4], "col2": [2, 3, 4, 5]})
+    bin_by_cols = ["col1", "col2"]
+
+    with pytest.raises(ValueError):
+        bin_df_cols(df, bin_by_cols, n_bins=[2])

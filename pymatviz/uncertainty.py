@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 from scipy.stats import norm
 
 from pymatviz.utils import Array, df_to_arrays
+
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 def qq_gaussian(
@@ -178,7 +181,7 @@ def get_std_decay(y_true: Array, y_pred: Array, y_std: Array) -> Array:
 
     decay_by_std = abs_err[y_std_sort].cumsum() / n_inc
 
-    return decay_by_std
+    return decay_by_std  # noqa: RET504
 
 
 def error_decay_with_uncert(

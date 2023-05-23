@@ -43,7 +43,8 @@ def test_plot_structure_2d(
     assert ax.get_aspect() == 1, "aspect ratio should be set to 'equal', i.e. 1:1"
     x_min, x_max, y_min, y_max = ax.axis()
     assert x_min == y_min == 0, "x/y_min should be 0"
-    assert x_max > 5 and y_max > 5, "x/y_max should be > 5"
+    assert x_max > 5
+    assert y_max > 5
 
     patch_counts = pd.Series(
         [type(patch).__name__ for patch in ax.patches]
@@ -51,3 +52,9 @@ def test_plot_structure_2d(
     assert patch_counts["Wedge"] == len(disordered_struct.composition)
 
     assert patch_counts["PathPatch"] > 182
+
+
+@pytest.mark.parametrize("axis", [True, False, "on", "off", "square", "equal"])
+def test_plot_structure_2d_axis(axis: str | bool) -> None:
+    ax = plot_structure_2d(disordered_struct, axis=axis)
+    assert ax.axes.axison is False if axis in (False, "off") else True

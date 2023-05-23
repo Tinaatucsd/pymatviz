@@ -8,7 +8,6 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.figure_factory as ff
-import plotly.graph_objects as go
 from matplotlib.cm import get_cmap
 from matplotlib.colors import LogNorm, Normalize
 from matplotlib.patches import Rectangle
@@ -21,19 +20,18 @@ from pymatviz.utils import df_ptable
 if TYPE_CHECKING:
     from typing import TypeAlias
 
+    import plotly.graph_objects as go
+
     ElemValues: TypeAlias = dict[str | int, int | float] | pd.Series | Sequence[str]
 
 CountMode = Literal[
-    "element_composition",
-    "fractional_composition",
-    "reduced_composition",
-    "occurrence",
+    "composition", "fractional_composition", "reduced_composition", "occurrence"
 ]
 
 
 def count_elements(
     elem_values: ElemValues,
-    count_mode: CountMode = "element_composition",
+    count_mode: CountMode = "composition",
     exclude_elements: Sequence[str] = (),
     fill_value: float | None = 0,
 ) -> pd.Series:
@@ -53,7 +51,7 @@ def count_elements(
             composition strings/objects or map from element symbols to heatmap values.
         count_mode ('(element|fractional|reduced)_composition'):
             Only used when elem_values is a list of composition strings/objects.
-            - element_composition (default): Count elements in each composition as is,
+            - composition (default): Count elements in each composition as is,
                 i.e. without reduction or normalization.
             - fractional_composition: Convert to normalized compositions in which the
                 amounts of each species sum to before counting.
@@ -87,8 +85,9 @@ def count_elements(
                 )
             ).value_counts()
         else:
+            attr = "element_composition" if count_mode == "composition" else count_mode
             srs = pd.DataFrame(
-                getattr(Composition(formula), count_mode).as_dict() for formula in srs
+                getattr(Composition(formula), attr).as_dict() for formula in srs
             ).sum()  # sum up element occurrences
     else:
         raise ValueError(
@@ -137,7 +136,7 @@ def ptable_heatmap(
     elem_values: ElemValues,
     log: bool = False,
     ax: plt.Axes = None,
-    count_mode: CountMode = "element_composition",
+    count_mode: CountMode = "composition",
     cbar_title: str = "Element Count",
     cbar_max: float | int | None = None,
     cmap: str = "summer_r",
@@ -176,9 +175,10 @@ def ptable_heatmap(
             or not at all (None). Defaults to "value".
             "fraction" and "percent" can be used to make the colors in different
             ptable_heatmap() (and ptable_heatmap_ratio()) plots comparable.
-        precision (str): f-string format option for heat labels. Defaults to None in
-            which case we fall back on ".1%" (1 decimal place) if heat_mode="percent"
-            else ".3g".
+        precision (str): f-string format option for heat labels. Defaults to ".1%"
+            (1 decimal place) if heat_mode="percent" else ".3g".
+        cbar_precision (str): f-string format option to set a different colorbar tick
+            label precision than the above heat label precision. Defaults to precision.
         text_color (str | tuple[str, str]): What color to use for element symbols and
             heat labels. Must be a valid color name, or a 2-tuple of names, one to use
             for the upper half of the color scale, one for the lower half. The special
@@ -301,12 +301,19 @@ def ptable_heatmap(
         def tick_fmt(val: float, _pos: int) -> str:
             # val: value at color axis tick (e.g. 10.0, 20.0, ...)
             # pos: zero-based tick counter (e.g. 0, 1, 2, ...)
+<<<<<<< HEAD
             if heat_mode == "percent":
                 # display color bar values as percentages
                 return f"{val:.0%}"
             if val < 1e4:
                 return f"{val:{cbar_precision or precision or '.0f'}}"
             return f"{val:{cbar_precision or precision or '.2g'}}"
+=======
+            default_prec = (
+                ".0%" if heat_mode == "percent" else (".0f" if val < 1e4 else ".2g")
+            )
+            return f"{val:{cbar_precision or precision or default_prec}}"
+>>>>>>> d60276bfc55d69d138c8784e1b29a0e658b32e5e
 
         cbar = fig.colorbar(
             mappable, cax=cb_ax, orientation="horizontal", format=tick_fmt
@@ -325,7 +332,7 @@ def ptable_heatmap(
 def ptable_heatmap_ratio(
     elem_values_num: ElemValues,
     elem_values_denom: ElemValues,
-    count_mode: CountMode = "element_composition",
+    count_mode: CountMode = "composition",
     normalize: bool = False,
     cbar_title: str = "Element Ratio",
     not_in_numerator: tuple[str, str] = ("#DDD", "gray: not in 1st list"),
@@ -390,18 +397,19 @@ def ptable_heatmap_ratio(
 
 def ptable_heatmap_plotly(
     elem_values: ElemValues,
-    count_mode: CountMode = "element_composition",
+    count_mode: CountMode = "composition",
     colorscale: str | Sequence[str] | Sequence[tuple[float, str]] = "viridis",
     showscale: bool = True,
     heat_mode: Literal["value", "fraction", "percent"] | None = "value",
     precision: str = None,
     hover_props: Sequence[str] | dict[str, str] | None = None,
     hover_data: dict[str, str | int | float] | pd.Series | None = None,
-    font_colors: Sequence[str] = ("black",),
+    font_colors: Sequence[str] = ("#eee", "black"),
     gap: float = 5,
     font_size: int = None,
     bg_color: str = None,
     color_bar: dict[str, Any] = None,
+    cscale_range: tuple[float | None, float | None] = (None, None),
     exclude_elements: Sequence[str] = (),
     log: bool = False,
     fill_value: float | None = 0,
@@ -429,9 +437,8 @@ def ptable_heatmap_plotly(
             or not at all (None). Defaults to "value".
             "fraction" and "percent" can be used to make the colors in different
             periodic table heatmap plots comparable.
-        precision (str): f-string format option for heat labels. Defaults to None in
-            which case we fall back on ".1%" (1 decimal place) if heat_mode="percent"
-            else ".3g".
+        precision (str): f-string format option for heat labels. Defaults to ".1%"
+            (1 decimal place) if heat_mode="percent" else ".3g".
         hover_props (list[str] | dict[str, str]): Elemental properties to display in the
             hover tooltip. Can be a list of property names to display only the values
             themselves or a dict mapping names to what they should display as. E.g.
@@ -448,14 +455,19 @@ def ptable_heatmap_plotly(
             the hover tooltip on a new line below the element name"). Defaults to None.
         font_colors (list[str]): One color name or two for [min_color, max_color].
             min_color is applied to annotations with heatmap values less than
-            (max_val - min_val) / 2. Defaults to ["black"].
+            (max_val - min_val) / 2. Defaults to ("#eee", "black") meaning light text
+            for low values and dark text for high values. May need to be manually
+            swapped depending on the colorscale.
         gap (float): Gap in pixels between tiles of the periodic table. Defaults to 5.
         font_size (int): Element symbol and heat label text size. Any valid CSS size
-            allowed. Defaults to None, meaning automatic font size based on plot size.
-            Element symbols will be bold and 1.5x this size.
+            allowed. Defaults to automatic font size based on plot size. Element symbols
+            will be bold and 1.5x this size.
         bg_color (str): Plot background color. Defaults to "rgba(0, 0, 0, 0)".
         color_bar (dict[str, Any]): Plotly color bar properties documented at
-            https://plotly.com/python/reference#heatmap-colorbar. Defaults to None.
+            https://plotly.com/python/reference#heatmap-colorbar. Defaults to
+            dict(orientation="h").
+        cscale_range (tuple[float | None, float | None]): Color bar range. Defaults to
+            (None, None) meaning the range is automatically determined from the data.
         exclude_elements (list[str]): Elements to exclude from the heatmap. E.g. if
             oxygen overpowers everything, you can do exclude_elements=['O'].
             Defaults to ().
@@ -472,6 +484,14 @@ def ptable_heatmap_plotly(
         raise ValueError(
             "Combining log color scale and heat_mode='fraction'/'percent' unsupported"
         )
+    if len(cscale_range) != 2:
+        raise ValueError(f"{cscale_range=} should have length 2")
+
+    color_bar = color_bar or {}
+    color_bar.setdefault("orientation", "h")
+    # if elem_values is a series with a name, use it as the color bar title
+    if isinstance(elem_values, pd.Series) and elem_values.name:
+        color_bar.setdefault("title", elem_values.name)
 
     elem_values = count_elements(elem_values, count_mode, exclude_elements, fill_value)
 
@@ -507,11 +527,10 @@ def ptable_heatmap_plotly(
             if heat_mode == "percent":
                 label = f"{heat_value:{precision or '.1%'}}"
             else:
-                if precision is None:
-                    prec = ".1f" if heat_value < 100 else ".0f"
-                    if heat_value > 1e5:
-                        prec = ".2g"
-                label = f"{heat_value:{precision or prec}}".replace("e+0", "e")
+                default_prec = ".1f" if heat_value < 100 else ",.0f"
+                if heat_value > 1e5:
+                    default_prec = ".2g"
+                label = f"{heat_value:{precision or default_prec}}".replace("e+0", "e")
 
         style = f"font-weight: bold; font-size: {1.5 * (font_size or 12)};"
         tile_text = f"<span {style=}>{symbol}</span>"
@@ -561,17 +580,17 @@ def ptable_heatmap_plotly(
 
     rgba0 = "rgba(0, 0, 0, 0)"
     if colorscale is None:
-        colorscale = [rgba0] + px.colors.sequential.Pinkyl
+        colorscale = [rgba0, *px.colors.sequential.Pinkyl]
     elif isinstance(colorscale, str):
-        colorscale = [(0, rgba0)] + px.colors.get_colorscale(colorscale)
-        colorscale[1][0] = 1e-6  # type: ignore
+        colorscale = [(0, rgba0), *px.colors.get_colorscale(colorscale)]
+        colorscale[1][0] = 1e-6
     elif isinstance(colorscale, Sequence) and isinstance(colorscale[0], str):
-        colorscale = [rgba0] + list(colorscale)  # type: ignore
+        colorscale = [rgba0, *colorscale]
     elif isinstance(colorscale, Sequence) and isinstance(colorscale[0], (list, tuple)):
         # list of tuples(float in [0, 1], color)
         # make sure we're dealing with mutable lists
         colorscale = [(0, rgba0), *map(list, colorscale)]  # type: ignore
-        colorscale[1][0] = 1e-6  # type: ignore
+        colorscale[1][0] = 1e-6  # type: ignore[index]
     else:
         raise ValueError(
             f"{colorscale = } should be string, list of strings or list of "
@@ -596,6 +615,10 @@ def ptable_heatmap_plotly(
         xgap=gap,
         ygap=gap,
         colorbar=log_cbar if log else None,
+        zmax=cscale_range[1],
+        zmin=cscale_range[0],
+        # https://github.com/plotly/plotly.py/issues/193
+        zauto=cscale_range == (None, None),
         **kwargs,
     )
     fig.update_layout(
@@ -608,7 +631,16 @@ def ptable_heatmap_plotly(
         width=1000,
         height=500,
     )
-    fig.update_traces(
-        colorbar=dict(lenmode="fraction", len=0.87, thickness=15, **(color_bar or {}))
-    )
+
+    if color_bar.get("orientation") == "h":
+        dct = dict(x=0.4, y=0.75, titleside="top", len=0.4)
+        color_bar = {**dct, **color_bar}
+    else:  # make title vertical
+        dct = dict(titleside="right", len=0.87)
+        color_bar = {**dct, **color_bar}
+        if title := color_bar.get("title"):
+            # <br><br> to increase title offset
+            color_bar["title"] = f"<br><br>{title}"
+
+    fig.update_traces(colorbar=dict(lenmode="fraction", thickness=15, **color_bar))
     return fig
